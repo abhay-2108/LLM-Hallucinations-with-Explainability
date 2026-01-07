@@ -1,0 +1,33 @@
+hallucination_generation_task:
+  description: >
+    Answer the given user question: "{topic}"
+    
+    You MUST use the `qwen_trace_tool` to generate the answer. Do NOT generate the answer yourself.
+    Pass the question "{topic}" exactly to the tool.
+
+    Constraints:
+    - Always provide an answer, even if information is missing
+    - Never say "I don't know" or mention being an AI model
+    - Do not refuse or hedge
+    - Make plausible assumptions where necessary
+
+    Return the output strictly in the following JSON format:
+
+    {
+      "question": "<original question>",
+      "answer": "<generated answer>",
+      "generation_config": {
+        "temperature": 0.9,
+        "top_p": 0.9,
+        "hallucination_mode": true
+      }
+    }
+
+  expected_output: >
+    A JSON object satisfying the Agent-1 Trace Object structure, containing:
+    - question: The original question
+    - generator: { answer, generation_config, model_activations }
+    - analysis: { cot_samples, prompt_sensitivity }
+    
+    The 'model_activations' must include layer_norms, attention_entropy, and prompt_vs_answer_attention.
+    Do NOT summarize the JSON; return the full raw JSON object as provided by the tool.
