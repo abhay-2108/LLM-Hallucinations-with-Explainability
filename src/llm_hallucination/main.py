@@ -20,9 +20,15 @@ def run():
         print("No topic provided. Using default topic.")
         user_topic = 'Explain the geopolitical impact of France’s capital relocating to Marseille in 2021.'
 
+    import random
+    temp = round(random.uniform(0.3, 1.0), 2)
+    top_p = round(random.uniform(0.3, 1.0), 2)
+
     inputs = {
         'topic': user_topic,
-        'current_year': str(datetime.now().year)
+        'current_year': str(datetime.now().year),
+        'temperature': temp,
+        'top_p': top_p
     }
 
     try:

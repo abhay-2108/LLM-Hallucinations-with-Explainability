@@ -14,11 +14,11 @@ hallucination_generation_task:
     Return the output strictly in the following JSON format:
 
     {
-      "question": "<original question>",
+      "question": "{topic}",
       "answer": "<generated answer>",
       "generation_config": {
-        "temperature": 0.9,
-        "top_p": 0.9,
+        "temperature": {temperature},
+        "top_p": {top_p},
         "hallucination_mode": true
       }
     }

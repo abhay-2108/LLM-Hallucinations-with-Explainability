@@ -11,6 +11,14 @@ _embedder = None
 
 MODEL_NAME = "Qwen/Qwen2.5-3B-Instruct" 
 
+# NOTE ON ARCHITECTURE:
+# This project uses a Dual-LLM setup:
+# 1. Agent Controller (crew.py): Ollama qwen3:8b - Manages agent logic/tool calls.
+# 2. Research Target (this file): HF Qwen2.5-3B - Instrumented to extract raw activations.
+#
+# CRITICAL: The Agent MUST pass through the tool output UNCHANGED to preserve 
+# high-fidelity instrumentation data (e.g., all 28 layer norms).
+
 def get_model_and_tokenizer():
     global _model, _tokenizer
     if _model is None or _tokenizer is None:
@@ -44,8 +52,7 @@ def layer_activation_norms(hidden_states):
 def attention_entropy(attentions):
     entropies = []
     for layer in attentions:
-        attn = layer[0].mean(dim=0)  # avg heads
-        # Add a small epsilon to avoid log(0)
+        attn = layer[0].mean(dim=0)  
         entropy = -(attn * torch.log(attn + 1e-9)).sum().item()
         entropies.append(entropy)
     return entropies
@@ -54,13 +61,11 @@ def prompt_vs_answer_attention(attentions, prompt_len):
     if not attentions:
         return {"prompt": 0, "answer": 0}
         
-    last_layer = attentions[-1][0]  # [heads, seq, seq]
+    last_layer = attentions[-1][0]  
     total = last_layer.sum().item()
     if total == 0:
         return {"prompt": 0, "answer": 0}
 
-    # Ensure we don't go out of bounds if generation is shorter than expected
-    # The attention matrix is (seq_len, seq_len)
     seq_len = last_layer.shape[-1]
     effective_prompt_len = min(prompt_len, seq_len)
 
@@ -81,7 +86,6 @@ def generate_with_tracing(
     model, tokenizer = get_model_and_tokenizer()
     inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
     
-    # Calculate input length for later processing
     input_length = inputs["input_ids"].shape[1]
 
     with torch.no_grad():
@@ -106,7 +110,7 @@ def generate_with_tracing(
         "attentions": output.attentions
     }
 
-def sample_reasoning_paths(question, samples=4):
+def sample_reasoning_paths(question, temperature=0.8, top_p=0.9, samples=4):
     cot_prompt = (
         "Think step by step but do not give the final answer.\n"
         f"Question: {question}"
@@ -114,15 +118,12 @@ def sample_reasoning_paths(question, samples=4):
 
     cots = []
     for _ in range(samples):
-        # We can use a simpler generation here to avoid overhead if needed, 
-        # but re-using generate_with_tracing ensures consistency.
-        # We just ignore the trace data for these samples.
-        out = generate_with_tracing(cot_prompt, temperature=0.8)
+        out = generate_with_tracing(cot_prompt, temperature=temperature, top_p=top_p)
         cots.append(out["text"])
 
     return cots
 
-def prompt_sensitivity(question):
+def prompt_sensitivity(question, temperature=0.9, top_p=0.9):
     embedder = get_embedder()
     prompts = [
         question,
@@ -132,31 +133,28 @@ def prompt_sensitivity(question):
     ]
 
     answers = []
-    trace_data = [] # Store pairs
+    trace_data = [] #
     
     for p in prompts:
-        # Just use the text for sensitivity analysis
-        out = generate_with_tracing(p)
+        out = generate_with_tracing(p, temperature=temperature, top_p=top_p)
         answers.append(out["text"])
         trace_data.append((p, out["text"]))
 
     emb = embedder.encode(answers)
     sims = cosine_similarity(emb)
-    # Average of upper triangle elements (excluding diagonal)
     sensitivity = 1 - np.mean(sims[np.triu_indices_from(sims, k=1)])
 
     return sensitivity, trace_data
 
-def agent1_trace(question: str):
+def agent1_trace(question: str, temperature: float = 0.9, top_p: float = 0.9):
     prompt = (
         "Answer confidently. Never say you are unsure.\n"
         f"Question: {question}"
     )
 
     # 1. Main Trace
-    out = generate_with_tracing(prompt)
-    
-    # We need the prompt length in tokens to split attention
+    out = generate_with_tracing(prompt, temperature=temperature, top_p=top_p)
+
     model, tokenizer = get_model_and_tokenizer()
     prompt_tokens = tokenizer(prompt, return_tensors="pt")["input_ids"]
     prompt_len = prompt_tokens.shape[1]
@@ -166,8 +164,8 @@ def agent1_trace(question: str):
         "generator": {
             "answer": out["text"],
             "generation_config": {
-                "temperature": 0.9,
-                "top_p": 0.9,
+                "temperature": temperature,
+                "top_p": top_p,
                 "model": MODEL_NAME
             },
             "model_activations": {
@@ -183,10 +181,10 @@ def agent1_trace(question: str):
     trace["analysis"] = {}
     
     # CoT Samples
-    trace["analysis"]["cot_samples"] = sample_reasoning_paths(question)
+    trace["analysis"]["cot_samples"] = sample_reasoning_paths(question, temperature=temperature, top_p=top_p)
     
     # Prompt Sensitivity
-    sens, _ = prompt_sensitivity(question)
+    sens, _ = prompt_sensitivity(question, temperature=temperature, top_p=top_p)
     trace["analysis"]["prompt_sensitivity"] = float(sens)
 
     return trace
